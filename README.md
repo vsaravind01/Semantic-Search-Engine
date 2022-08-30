@@ -7,7 +7,7 @@ These records are then matched with the encoded query with `knn_search`.
 
 The search engine makes use of the sentence transformers model 
 [all-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2) 
-whose further base model is [microsoft/MiniLM-L12-H384-uncased](https://huggingface.co/microsoft/MiniLM-L12-H384-uncased).
+whose base model is [microsoft/MiniLM-L12-H384-uncased](https://huggingface.co/microsoft/MiniLM-L12-H384-uncased).
 
 |Model Name          |Performance Sentence Embeddings (14 Datasets)  |Performance Semantic Search (6 Datasets)  |Avg. Performance  |Speed  |Model Size  |
 |:------------------:|:---------------------------------------------:|:----------------------------------------:|:----------------:|:-----:|:----------:|
