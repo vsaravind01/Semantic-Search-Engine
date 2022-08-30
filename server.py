@@ -1,4 +1,5 @@
-from flask import Flask, request, json
+from flask import Flask, request, json, send_file
+from fpdf import FPDF
 from flask_restful import reqparse, Resource, Api
 from flask_cors import CORS
 from elasticsearch import Elasticsearch
@@ -6,6 +7,7 @@ from sentence_transformers import SentenceTransformer
 import json
 from datetime import datetime
 import configparser
+import io
 
 config = configparser.ConfigParser()
 config.read('project.ini')
@@ -20,11 +22,104 @@ es = Elasticsearch(
     basic_auth=(config['ELASTIC']['user'], config['ELASTIC']['password'])
 )
 
-# es = Elasticsearch("http://localhost:9200")
-
 API_KEY = "600b6db6a2d4f50b17bef02d950dfc51c4bc1b391b18cfa3ddf334bab7fa06bf"
 
 transform_model = SentenceTransformer('all-MiniLM-L12-v2')
+
+
+def parse_string(s):
+    output_string = ''
+
+    for i in range(0, len(s), 1):
+
+        if s[i].encode('unicode_escape') == b'\\t':
+            output_string += ' '
+            continue
+        if s[i - 1] == '|' and s[i] == ' ':
+            output_string += '\n'
+            output_string += '\n'
+        if s[i] != '|':
+            output_string += s[i]
+        if s[i] == ';':
+            output_string += '\n'
+
+    return output_string
+
+
+@app.route('/generate_pdf/<index>/<question_id>', methods=['GET'])
+def create_pdf(index, question_id):
+    # create a fpdf object
+    # Layout => 'P','L' => P for portrait
+    # Unit => 'mm','cm','in'
+    # format =?'A3','A4',default,'A5','Letter','Legal',(100,150)
+
+    question = es.get(index=index, id=question_id)
+
+    sabha = question['_index']
+    sabha_name_token = sabha.split('_')
+    sabha_name = (sabha_name_token[0] + ' ' + sabha_name_token[1] + ' - ' + sabha_name_token[2]).title()
+
+    pq_data = question['_source']
+
+    pq = pq_data['question'].encode('utf-8', 'replace').decode('utf-8')
+    answer = pq_data['answer'].encode('utf-8', 'replace').decode('utf-8')
+    sabha = sabha_name.encode('utf-8', 'replace').decode('utf-8')
+    answered_on = pq_data['answered_on'].encode('utf-8', 'replace').decode('utf-8')
+    mp = pq_data['mp'].encode('utf-8', 'replace').decode('utf-8')
+    ministry = "MINISTRY OF " + pq_data['ministry'].encode('utf-8', 'replace').decode('utf-8')
+
+    pdf = FPDF('P', 'mm', 'Legal')
+
+    # page breaks
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    pdf.alias_nb_pages()
+
+    # add a page
+    pdf.add_page()
+
+    pdf.add_font('DejaVu', fname='DejaVuSerif.ttf', uni=True)
+    pdf.add_font('DejaVuBold', fname='DejaVuSerif-Bold.ttf', uni=True)
+    pdf.set_font('DejaVuBold', size=22)
+
+    # width of cell,height of cell,text
+    pdf.cell(0, 20, 'Government of India', border=True, ln=True, align='C')
+
+    pdf.set_font('DejaVuBold', size=15)
+    pdf.ln(5)
+    pdf.multi_cell(0, 10, ministry, align='C')
+    pdf.cell(0, 10, sabha, ln=True, align='C')
+
+    pdf.set_font('DejaVu', size=15)
+    pdf.ln(3)
+    pdf.cell(0, 10, f'Answered on {answered_on}', ln=True)
+
+    pdf.ln(3)
+    pdf.cell(0, 7, f'Question by: {mp}', ln=True)
+    pdf.multi_cell(0, 7, f'Question to: {ministry}')
+
+    pdf.ln(15)
+    pdf.set_font('DejaVuBold', 'U', size=15)
+    pdf.cell(0, 10, f'Question:')
+    pdf.ln(10)
+    pdf.set_font('DejaVu', '', size=15)
+    s = parse_string(pq)
+
+    pdf.multi_cell(0, 7, f'{s}')
+
+    pdf.ln(15)
+    pdf.set_font('DejaVuBold', 'U', size=15)
+    pdf.cell(0, 10, f'Answer:')
+    pdf.ln(10)
+    pdf.set_font('DejaVu', '', size=15)
+    pdf.set_font('DejaVu', size=15)
+    s = parse_string(answer)
+    pdf.multi_cell(0, 9, f'{s}')
+
+    fileName = question['_index'] + question['_id'] + '.pdf'
+    stream = io.BytesIO(pdf.output(dest='S').encode('latin-1'))
+    return send_file(stream, mimetype='application/pdf', download_name=fileName,
+                     as_attachment=False)
 
 
 def format_record(data):
@@ -315,7 +410,6 @@ class IndexManager(Resource):
                 )
                 return response
         except Exception as e:
-            print(e)
             response = app.response_class(
                 headers={'Content-Type': 'application/json',
                          'Access-Control-Allow-Origin': '*',
@@ -513,9 +607,13 @@ class QuestionManager(Resource):
         self.questionUploadArgs.add_argument('ministry_id', required=True, type=str,
                                              help='Ministry ID cannot be blank!')
 
+        self.questionDeleteArgs = reqparse.RequestParser()
+        self.questionDeleteArgs.add_argument('SECRET_KEY', required=True, type=str, help='SECRET_KEY is required!')
+        self.questionDeleteArgs.add_argument('index', required=True, type=str, help='Index cannot be blank!')
+        self.questionDeleteArgs.add_argument('id', required=True, type=str, help='Id cannot be blank!')
+
     def post(self):
         args = self.questionUploadArgs.parse_args()
-        print(args)
 
         # validate secret key
         if args['SECRET_KEY'] != API_KEY:
@@ -543,7 +641,6 @@ class QuestionManager(Resource):
         try:
             exists = es.indices.exists(index=index)
             if not exists:
-                print(exists)
                 response = app.response_class(
                     headers={'Content-Type': 'application/json',
                              'Access-Control-Allow-Origin': '*',
@@ -572,7 +669,6 @@ class QuestionManager(Resource):
 
                 }
                 res = es.index(index=index, document=data)
-                print(res)
                 response = app.response_class(
                     headers={'Content-Type': 'application/json',
                              'Access-Control-Allow-Origin': '*',
@@ -586,7 +682,49 @@ class QuestionManager(Resource):
                 return response
 
         except Exception as e:
-            print(e)
+            response = app.response_class(
+                headers={'Content-Type': 'application/json',
+                         'Access-Control-Allow-Origin': '*',
+                         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                         'Access-Control-Allow-Headers': 'Content-Type, Authorization, Content-Length, X-Requested-With'},
+                response=json.dumps({'status': 'error', 'message': 'Internal server error'}),
+                status=200,
+                mimetype='application/json'
+            )
+            return response
+
+    def delete(self):
+        args = self.questionDeleteArgs.parse_args()
+        index = args['index']
+        id = args['id']
+        try:
+            exists = es.indices.exists(index=index)
+            if not exists:
+                response = app.response_class(
+                    headers={'Content-Type': 'application/json',
+                             'Access-Control-Allow-Origin': '*',
+                             'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                             'Access-Control-Allow-Headers': 'Content-Type, Authorization, Content-Length, X-Requested-With'},
+                    response=json.dumps({'status': 'error', 'message': "Index does not exist"}),
+                    status=400,
+                    mimetype='application/json'
+                )
+                return response
+            else:
+                res = es.delete(index=index, id=id)
+                response = app.response_class(
+                    headers={'Content-Type': 'application/json',
+                             'Access-Control-Allow-Origin': '*',
+                             'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                             'Access-Control-Allow-Headers': 'Content-Type, Authorization, Content-Length, X-Requested-With'},
+                    response=json.dumps(
+                        {'status': 'success', 'message': 'Question deleted successfully', 'res': res.body}),
+                    status=200,
+                    mimetype='application/json'
+                )
+                return response
+
+        except Exception as e:
             response = app.response_class(
                 headers={'Content-Type': 'application/json',
                          'Access-Control-Allow-Origin': '*',
@@ -664,7 +802,6 @@ class SimilarQuestionList(Resource):
                 )
                 return response
             except Exception as e:
-                print(e)
                 response = app.response_class(
                     response=json.dumps({'status': 'error', 'message': "Internal server error"}),
                     status=500,
