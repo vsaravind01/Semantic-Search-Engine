@@ -2,7 +2,7 @@
 
 Search Engine for the Parliament Connect. Tools and technologies used - Elasticsearch, SentenceTransformers, Flask and FPDF.
 
-We use the sentence transformer (SBERT) model to encode all the parliament questions/answers and store in the Elasticsearch index as dense vectors.
+We use the sentence transformer model to encode all the parliament questions/answers and store in the Elasticsearch index as dense vectors.
 These records are then matched with the encoded query with `knn_search`.
 
 The search engine makes use of the sentence transformers model 
