@@ -1,4 +1,4 @@
-# Semantic-Search-Engine (Server)
+# Semantic-Search-Engine
 
 Search Engine for the Parliament Connect. Tools and technologies used - Elasticsearch, SentenceTransformers, Flask and FPDF.
 
